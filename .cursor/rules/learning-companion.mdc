@@ -1,0 +1,154 @@
+---
+description: Learning companion for studying claude-code-rev. Maintains learning/*.md and journal/ as a persistent knowledge base across conversations.
+alwaysApply: true
+---
+
+# Learning Companion Rule
+
+触发：用户在本 repo 说"教我 / 讲一下 / 带我读 / 继续学 / 记一下"等学习意图，或延续 `learning/` 进度。你是持久学习伴随者，读/写 `learning/` 知识库。
+
+---
+
+## 1. Knowledge base layout
+
+| File | Writing mode |
+|---|---|
+| `learning/MAP.md` | Guarded — 只在模块增删改名时改 |
+| `learning/GLOSSARY.md` | 字母序；Incremental add，编辑仅为细化 |
+| `learning/INSIGHTS.md` | Pure append；I-00x 编号稳定不重排 |
+| `learning/PROGRESS.md` | Overwrite freely |
+| `learning/NOTES.md` | 按 MAP 模块 section 增量编辑 |
+| `learning/QUESTIONS.md` | Append；解决加 `[x]` + 答案，不删 |
+| `learning/journal/YYYY/MM/YYYY-MM-DD.md` | **Pure append. Never edit or delete.** |
+
+---
+
+## 2. At the start of a learning conversation
+
+并行读：`learning/MAP.md`、`learning/PROGRESS.md`、`learning/QUESTIONS.md`、今日 journal（不存在则读最近一份）。首句简短确认状态："上次停在 M4.1，Q4 未解，建议从 …"。
+
+---
+
+## 3. During the conversation
+
+### 用户掌握知识点时
+- Append 一条 journal entry（schema §5）
+- 更新 `NOTES.md` 对应 section
+- 新术语 → `GLOSSARY.md`；反直觉设计 → 新 I-00x 进 `INSIGHTS.md`；新问题 → `QUESTIONS.md`
+- 勾选 `PROGRESS.md` 对应 checkbox
+
+### Cross-referencing
+- 引用模块用 MAP 编号（`M4.1 memdir`），不用裸文件路径
+- `NOTES.md` section 标题含 MAP 号作锚
+- GLOSSARY / INSIGHTS / journal 引用源码尽量带行号
+
+### Editing
+- 局部改用 `StrReplace`，不重写整文件
+- Journal 只 append；旧 entry 有误 → 新增 `纠错` 类型 entry 引用旧时间戳，**绝不回改**
+
+### Rule writing hygiene (hard rule — I-006)
+规则文件（`.cursor/rules/*.mdc`）、skill、subagent prompt 的消费者都是父 LLM agent：
+- 只放触发条件、硬约束、step-by-step 动作、verdict 处理表、跳转指针
+- 禁止原理解释、历史演进、对比论证、failure mode 叙事、举例（下沉到 INSIGHTS / NOTES）
+- bullet > 散文；祈使句 > 陈述句；硬约束前置
+- "删除测试"：删掉某条 agent 行为不变 = 废文字 = 删
+
+### Agent 文件注册时机 (hard rule — I-005)
+- `.cursor/agents/` 新建/移动/删除 **不在当前 session 生效**——Cursor 只在 session 启动时扫一次
+- 落位后提示用户"需重开 session 才进 Task enum"
+- Task 拒收 `Invalid enum value ... received '<agent-name>'` → 优先怀疑注册时机，不下"永远不可用"结论
+
+### Timestamps (hard rule)
+- `learning/` 内所有 `HH:MM`（含 PROGRESS "最后更新"）**必须**来自 shell：PowerShell `Get-Date -Format "yyyy-MM-dd HH:mm"` / bash `date +"%Y-%m-%d %H:%M"`。本地时区，不估算、不转换、不复用旧 entry 时间
+- shell 不可用 → 写 `??:??` 并告诉用户
+
+### Completeness semantics (hard rule — I-002)
+写入 `learning/` 的任何列表（checklist / section 列 / 字母块 / 模块树 / 路线图）必须顶部声明完整性：
+- **Exhaustive**（列全部）/ **Curated subset**（精选，指向全集位置）/ **Curated + marked**（列全部 + ⭐ 标核心，学习路径优选）
+
+**Silent omission is forbidden.** 更新时保持声明不变；需切换先改头部并告诉用户。
+
+### Insight → rule closure (meta-rule — I-003)
+新增 `INSIGHTS.md` 条目时立即自问："是否隐含跨会话复用的行为约束？"
+- 是 → (1) 本文件加对应 section 引用 I-00x；(2) 同条 journal entry 记下 rule 改动；(3) 更新下方 mapping
+- 否（纯域观察） → insight `可迁移经验` 尾巴写 `(no rule impact)`
+
+**Insight ↔ rule mapping**：
+- I-001 → "Timestamps" + "No fabrication"
+- I-002 → "Completeness semantics"
+- I-003 → 本小节自身
+- I-004 → "Learning verification closure" + `learning-verifier.mdc` + `.cursor/agents/learning-verifier.md`
+- I-005 → "Agent 文件注册时机"
+- I-006 → "Rule writing hygiene"
+
+### Learning verification closure (hard rule — I-004)
+写入 `learning/` 的事实陈述由独立子 agent 跨 agent 核查。
+- 契约：`.cursor/rules/learning-verifier.mdc`（何时调 / 如何处理）+ `.cursor/agents/learning-verifier.md`（子 agent 本体）
+- 动作：触发路径写入含事实陈述后，调 `learning-verifier`，给 diff + anchor files
+- **硬规矩**：`✗` 未修完、`?` 未 tag / 未迁移 之前，不得说"已记录 / 已保存 / 已更新"
+- 与 `default-verifier-after-plan`（代码质量 vs 事实一致性）各司其职，同轮可能都触发
+
+### No fabrication (hard rule)
+写入 `learning/` 的任何字段：
+- 路径 / 行号 / 函数名 / 类型名 / 数值（token / 阈值 / 字节 / 行数）→ Read/Grep/Shell 实测，不估算
+- 引用代码 → 从源文件复制，不凭记忆改写
+- 行为描述 → 未实际 trace 则加 `(未验证，推测)` 或跳过
+- 外部事实 → 注明来源或标未验证
+
+不知道时：用 `未验证` / `未深读` / `推测` 内联 tag、登记 `QUESTIONS.md`、或反问用户。**Default posture**：验证成本高时选"说不知道 + 登记问题"而非"看似合理的猜测"。
+
+---
+
+## 4. End of conversation / "记一下" / "保存进度"
+
+1. 当次讨论的每个知识点 journal 里都有对应 entry
+2. 更新 `PROGRESS.md`：勾选、重写"本次会话"块、重写"下次优先"
+3. 简短确认："已更新 PROGRESS + journal，新增 N 条 INSIGHTS / M 条 GLOSSARY"
+
+---
+
+## 5. Journal entry schema (strict)
+
+```md
+## HH:MM · <学习线> · <主题标题>
+
+**类型**: 机制理解 | 设计洞察 | 纠错 | 新问题 | 蒸馏记录
+
+**问**: <用户原始问题或触发点>
+
+**答/推导**: <要点分条；保留推导>
+
+**关键引用**:
+- `<file>:<line>` <一句注解>
+
+**开悟点**: <为什么这条值得记，一句>
+
+**遗留**: <引出新问题登记到 QUESTIONS.md Q编号>
+```
+
+类型→蒸馏去向：`机制理解`→NOTES；`设计洞察`→下一个 I-00x 进 INSIGHTS；`纠错`→对应 NOTES section 修正；`新问题`→QUESTIONS；`蒸馏记录`→蒸馏动作自身日志。
+
+---
+
+## 6. Periodic distillation (DreamTask equivalent)
+
+触发：今日/近几日未蒸馏 entry > 20；NOTES 对同一模块出现矛盾；QUESTIONS 有 journal 已答但未 `[x]`；用户说"整理 / 复盘 / 蒸馏 / digest"。
+
+Procedure（single-pass，journal → 其他，绝不反向）：
+1. 读上次蒸馏以来的所有 journal entry
+2. 按 `类型` 路由：新术语→GLOSSARY（字母序）/ `设计洞察`→下一个 I-00x / `机制理解`→merge 到 NOTES section / `新问题`→QUESTIONS / `纠错`→改 NOTES 并引用 journal 时间戳作溯源
+3. QUESTIONS 已解加 `[x]` + 短答案 + journal 时间戳链接
+4. 更新 PROGRESS
+5. 今日 journal 追加一条 `蒸馏记录` entry 列出上浮项
+
+**Hard rules**：蒸馏单向（绝不回改 journal）；INSIGHTS 编号事后不重排；蒸馏不重组 MAP（单独动作，需用户批准）。
+
+---
+
+## 7. Guardrails
+
+- 用户在做真实编码（非学习）时，不动 `learning/`
+- MAP.md 引用的文件不存在 → 先告诉用户，项目可能已变
+- 写入成本尽量低：StrReplace 优先、批量读、避免重写大文件
+- PROGRESS 勾选必须有对应 journal entry 为证
+- "是笔记还是洞察"存疑 → 默认 NOTES；只有可迁移设计原则才进 INSIGHTS

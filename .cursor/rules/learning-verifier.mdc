@@ -1,0 +1,68 @@
+---
+description: Default to learning-verifier after writes into learning/ that contain factual claims
+alwaysApply: false
+---
+
+# Learning Verifier 激活契约 (I-004)
+
+子 agent 本体在 `.cursor/agents/learning-verifier.md`，包含完整 system prompt + 工具白名单 + `readonly: true`，由 Cursor custom-agent 机制注入。本文件只定义**何时调、如何处理结果**。
+
+## 触发
+
+当你刚写入下列任一路径，且内容含事实陈述（文件路径、行号、函数/类型/常量名、引用代码、数值、行为断言）：
+
+- `learning/INSIGHTS.md`
+- `learning/NOTES.md`
+- `learning/GLOSSARY.md`
+- `learning/MAP.md`
+- `learning/QUESTIONS.md`
+- `learning/journal/**/*.md`
+
+宣称完成前，必须调用 `learning-verifier` 子 agent 做一次事实核查。
+
+## 跳过
+
+- 条目只含观点、推导、反思、`开悟点`、情绪记录
+- 新增 `QUESTIONS.md` Q 只登记未知，不含断言性答案
+- `PROGRESS.md` 纯勾选或总结改写，未引入新事实陈述
+- `纠错` 类条目对早期错误**引用原文**时，引用本身不需重验
+
+存疑时优先调用。
+
+## 调用
+
+调用 `learning-verifier` 子 agent，提供：刚写入的 diff + 所在 `learning/*.md` 文件列表。
+
+**注册时机警告（I-005）**：本子 agent 住在 `.cursor/agents/learning-verifier.md`，由 Cursor 在 **session 启动时**扫描注册。若该文件是**本会话中途**新建 / `mv` 到位的，Task enum 当前会话看不见它，调用会被 schema 拒收（错误形如 `Invalid enum value ... received 'learning-verifier'`）。处理：登记到 `QUESTIONS.md` 待下次 session 回扫，**不**伪造"已验证"。
+
+## 处理输出
+
+| Verdict | 父 agent 必需动作 |
+|---|---|
+| `✓ 已核对` | 保留 |
+| `✗ 与源码冲突` | **必须**修正条目（就地编辑或按 journal 纠错惯例追加更正），再宣称完成 |
+| `? 未能验证` | **必须**给该陈述加 `(未验证)` 行内 tag，或迁到 `QUESTIONS.md`。**不**默认当对 |
+| `~ 无法判断` | 上抛给用户，**不**自行决定 |
+
+**硬规矩**：所有 `✗` 修完、所有 `?` tag 或迁移完之前，不得说"已记录 / 已保存 / 已更新"。
+
+没有发现问题也要明写"verifier 未发现问题"并补一句剩余验证盲区（对齐 `default-verifier-after-plan.mdc` 同类规矩）。
+
+## Carve-out
+
+下列文件改动**不**触发本 verifier：
+- 本文件 `learning-verifier.mdc`
+- `.cursor/agents/learning-verifier.md`
+- `.cursor/rules/learning-companion.mdc`
+- 任何 `learning/` 之外的文件
+
+理由：用同一个 verifier 验自己是循环，靠用户直接 review 把关。
+
+## 与 `default-verifier-after-plan` 的分工
+
+两个 verifier **各司其职，同一轮可能都触发**：
+
+- `default-verifier-after-plan` → **代码/架构质量**门禁，Plan→Implement 周期验收
+- 本规则 → **事实一致性**门禁，写入 `learning/` 的断言 vs 源码
+
+同一轮若同时发生代码改动 + `learning/` 写入，两个都跑，不互相替代。
